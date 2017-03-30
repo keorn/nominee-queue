@@ -17,7 +17,6 @@ pragma solidity ^0.4.8;
 // When validator gets kicked or reaches the end of staking period he gets removed.
 // When a validator is removed the highest nominee if it exists takes the validator slot
 // and is removed from the nominee list.
-// Engine ensures each validator receives 
 contract NomineeQueue {
     // CONSTANTS
 
