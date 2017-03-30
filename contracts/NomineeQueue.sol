@@ -1,4 +1,4 @@
-pragma solidity ^0.4.6;
+pragma solidity ^0.4.8;
 
 // ToAdHiReMaAlMaPe
 
@@ -19,6 +19,20 @@ pragma solidity ^0.4.6;
 // and is removed from the nominee list.
 // Engine ensures each validator receives 
 contract NomineeQueue {
+    // CONSTANTS
+
+    // minimalNomination = totalStake/nominationDivisor
+    uint public constant nominationDivisor = 1000;
+    // Number of validator slots.
+    uint public constant validatorCount = 3;
+    // Number of blocks after which the validator can be removed.
+    uint validatorTerm = 100;
+    // Proportion of stake removed on benign misbehaviour.
+    uint public slashingDivisor = 20;
+
+
+    // STRUCTS
+
     struct ValidatorStatus {
         // Index in the validatorList.
         uint index;
@@ -49,23 +63,29 @@ contract NomineeQueue {
         bool validator;
     }
 
-	uint nominationDivisor = 1000; // minimalNomination = totalStake/nominationDivisor
-	mapping(address => NomineeStatus) nominees; // Status of the nominees.
-	address highestNominee; // Nominee with the most stake behind him that is keen to be a validator.
-	uint totalStake = 2 ether; // Total number of tokens held as validator stake.
-	uint validatorCount = 3; // Number of validator slots.
-	uint validatorTerm = 100; // Number of blocks after which the validator can be removed.
-	// Accounts used for testing: "0".sha3() and "1".sha3(), they are staking one Ether each
-    address[] public validatorList;
-    mapping(address => ValidatorStatus) validators;
-    uint slashingDivisor = 20; // Proportion of stake removed on benign misbehaviour.
-    uint totalSupply = 0;
+    // STATE
 
-    uint initialStake = 1 ether;
+    uint public totalSupply;
+    // Total number of tokens held as validator stake.
+    uint public totalStake;
+
+    // Status of the nominees.
+    mapping(address => NomineeStatus) nominees;
+     // Nominee with the most stake behind him that is keen to be a validator.
+    address highestNominee;
+    // Current list of validators.
+    address[] public validatorList;
+    // Status of the validators.
+    mapping(address => ValidatorStatus) validators;
+
+    // CONSTRUCTOR
+
+    uint public constant initialStake = 1 ether;
     function NomineeQueue() {
         validatorList.push(0x7d577a597b2742b498cb5cf0c26cdcd726d39e6e);
 
         for (uint i = 0; i < validatorList.length; i++) {
+            totalStake += initialStake;
             address validator = validatorList[i];
             nominees[validator] = NomineeStatus({
                 stake: initialStake,
@@ -87,8 +107,10 @@ contract NomineeQueue {
         return validatorList;
     }
 
+    // NOMINEE METHODS
+
     // Commit stake to a given address.
-    function nominate(address nominee) payable minimumStake(nominee) {
+    function nominate(address nominee) payable minimum_stake(nominee) {
         nominees[nominee].stake += msg.value;
         nominees[nominee].inputStake += msg.value;
         nominees[nominee].nominators[msg.sender] += msg.value;
@@ -100,7 +122,7 @@ contract NomineeQueue {
     }
 
     // Remove stake if its not validating.
-    function withdraw(address nominee) isNotValidator(nominee) {
+    function withdraw(address nominee) is_not_validator(nominee) {
         uint stake = nominees[nominee].nominators[msg.sender];
         nominees[nominee].nominators[msg.sender] = 0;
         nominees[nominee].stake -= stake;
@@ -109,19 +131,15 @@ contract NomineeQueue {
         if (msg.sender.send(allowance)) return;
     }
 
+    // NEW VALIDATOR
+
     // Called by nominee when he thinks he has the most stake and is keen to become a validator.
-    function claimHighest() onlyHighest {
+    function claimHighest() only_highest {
         highestNominee = msg.sender;
         addValidator();
     }
 
-    // Claim highest and kick old in one tx.
-    function replaceOld(address old) {
-        claimHighest();
-        kickOldValidator(old);
-    }
-
-    function addValidator() private emptySlot hasHighest {
+    function addValidator() private empty_slot has_highest {
         validators[highestNominee].index = validatorList.length;
         validatorList.push(highestNominee);
         totalStake += nominees[highestNominee].stake;
@@ -134,29 +152,24 @@ contract NomineeQueue {
         addValidator();
     }
 
+    // Claim highest and kick old in one tx.
+    function replaceOld(address old) {
+        claimHighest();
+        kickOldValidator(old);
+    }
+
+    // MALICIOUS MISBEHAVIOUR REPORTING
+
     // Called when a validator is bad.
-    function reportMalicious(address validator) onlyValidator notReportedMalicious(validator) {
+    function reportMalicious(address validator) only_validator not_reported_malicious(validator) {
         validators[validator].malicious.votes++;
         validators[validator].malicious.voted[msg.sender] = true;
         removeValidator(validator);
         addValidator();
     }
 
-    // Called on benign validator misbehaviour.
-    function reportBenign(address validator) onlyValidator {
-        validators[validator].benign.votes++;
-        validators[validator].benign.voted[msg.sender] = true;
-        slash(validator);
-    }
-
-    function slash(address validator) isBenign(validator) {
-        uint toSlash = nominees[validator].stake / slashingDivisor;
-        nominees[validator].stake -= toSlash;
-        totalStake -= toSlash;
-    }
-
     // Remove a validator without enough support.
-    function removeValidator(address validator) private  isMaliciousOrOld(validator) {
+    function removeValidator(address validator) private is_malicious_or_old(validator) {
         totalStake -= nominees[validator].stake;
         uint removedIndex = validators[validator].index;
         uint lastIndex = validatorList.length-1;
@@ -170,8 +183,25 @@ contract NomineeQueue {
         validators[validator].index = 0;
     }
 
+    // BENIGN MISBEHAVIOUR REPORTING
+
+    // Called on benign validator misbehaviour.
+    function reportBenign(address validator) only_validator {
+        validators[validator].benign.votes++;
+        validators[validator].benign.voted[msg.sender] = true;
+        slash(validator);
+    }
+
+    function slash(address validator) is_benign(validator) {
+        uint toSlash = nominees[validator].stake / slashingDivisor;
+        nominees[validator].stake -= toSlash;
+        totalStake -= toSlash;
+    }
+
+    // REWARD CLAIMING
+
     // Called to receive rewards for a given validator.
-    function claimRewards(address validator) isValidator(validator) {
+    function claimRewards(address validator) is_validator(validator) {
         var nominee = nominees[validator];
         // Number of blocks for which rewards can be claimed.
         uint timeElapsed = block.number - max(validators[validator].added, nominee.lastClaim[msg.sender]);
@@ -186,6 +216,8 @@ contract NomineeQueue {
         totalSupply += reward;
         if (!msg.sender.send(reward)) throw;
     }
+
+    // CONSTANT UTILITY FUNCTIONS
 
     function max(uint one, uint two) constant returns(uint) {
         if (one > two) {
@@ -209,48 +241,55 @@ contract NomineeQueue {
         return totalTokens * saturatingSub(60, stakePercentage) / (stakePercentage**2*100+10000);
     }
 
-    modifier minimumStake(address nominee) {
+    // MODIFIERS
+
+    modifier minimum_stake(address nominee) {
         if (nominees[nominee].stake + msg.value < totalStake / nominationDivisor) throw; _;
     }
 
-    modifier onlyValidator() {
+    modifier only_validator() {
         if (!nominees[msg.sender].validator) throw; _;
     }
 
-    modifier notReportedMalicious(address validator) {
+    modifier not_reported_malicious(address validator) {
         if (validators[validator].malicious.voted[msg.sender]) throw; _;
     }
 
-    modifier notReportedBenign(address validator) {
+    modifier not_reported_benign(address validator) {
         if (validators[validator].benign.voted[msg.sender]) throw; _;
     }
 
-    modifier onlyHighest() {
+    modifier only_highest() {
         if (nominees[msg.sender].stake <= nominees[highestNominee].stake) throw; _;
     }
 
-    modifier hasHighest() {
+    modifier has_highest() {
         if (highestNominee != 0) _;
     }
 
-    modifier emptySlot() {
+    modifier empty_slot() {
         if (validatorCount > validatorList.length) _;
     }
 
-    modifier isValidator(address validator) {
+    modifier is_validator(address validator) {
         if (nominees[validator].validator) _;
     }
 
-    modifier isNotValidator(address validator) {
+    modifier is_not_validator(address validator) {
         if (!nominees[validator].validator) _;
     }
 
-    modifier isMaliciousOrOld(address validator) {
+    modifier is_malicious_or_old(address validator) {
         if (validators[validator].malicious.votes > validatorList.length / 2
           || block.number > validators[validator].added + validatorTerm) _;
     }
 
-    modifier isBenign(address validator) {
+    modifier is_benign(address validator) {
         if (validators[validator].benign.votes > validatorList.length / 2) _;
+    }
+
+    // Fallback function throws when called.
+    function() payable {
+        throw;
     }
 }
